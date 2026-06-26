@@ -359,6 +359,10 @@ textarea {
   gap: 8px;
 }
 
+.range-grid[hidden] {
+  display: none;
+}
+
 .range-grid label {
   min-width: 0;
   margin-bottom: 0;
@@ -368,6 +372,10 @@ textarea {
   min-width: 0;
   padding-right: 6px;
   padding-left: 6px;
+}
+
+.range-grid .primary-button {
+  grid-column: 1 / -1;
 }
 
 .summary-total-box {
@@ -393,6 +401,36 @@ textarea {
 .summary-total-box small {
   color: var(--muted);
   font-size: 12px;
+}
+
+.summary-stat-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.summary-stat {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: #fffef8;
+  padding: 10px;
+}
+
+.summary-stat span {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.summary-stat strong {
+  min-width: 0;
+  color: var(--blue);
+  font-size: 14px;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
 }
 
 .category-list,
@@ -487,6 +525,11 @@ textarea {
   background: #fff0aa;
 }
 
+.calendar-day.is-focused {
+  outline: 2px solid var(--red);
+  outline-offset: 1px;
+}
+
 .calendar-day.has-spending {
   box-shadow: inset 0 -3px 0 #d66b44;
 }
@@ -506,12 +549,14 @@ textarea {
 
 .summary-item {
   display: grid;
-  grid-template-columns: minmax(0, 1fr);
+  grid-template-columns: minmax(0, 1fr) auto;
   gap: 7px;
-  border: 1px solid var(--line);
-  border-radius: 7px;
-  background: #fffef8;
-  padding: 10px;
+  border-top: 1px dotted #c5bea8;
+  padding: 9px 0;
+}
+
+.summary-item:first-child {
+  border-top: 0;
 }
 
 .summary-item strong,
@@ -539,6 +584,71 @@ textarea {
 .summary-item-right span {
   color: var(--red);
   font-weight: 700;
+}
+
+.summary-date-group {
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: #fffef8;
+  overflow: hidden;
+}
+
+.summary-date-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  border-bottom: 1px solid var(--line);
+  background: var(--soft-blue);
+  padding: 9px 10px;
+}
+
+.summary-date-heading strong {
+  color: var(--blue);
+  font-size: 13px;
+}
+
+.summary-date-heading span {
+  color: var(--red);
+  font-weight: 700;
+}
+
+.summary-date-items {
+  padding: 0 10px;
+}
+
+.day-filter-clear {
+  width: 100%;
+  margin: 0 0 10px;
+}
+
+.donate-body {
+  display: grid;
+  gap: 12px;
+  padding: 12px;
+}
+
+.donate-message {
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: #fffef8;
+  padding: 12px;
+}
+
+.donate-message strong,
+.donate-message p {
+  display: block;
+}
+
+.donate-message strong {
+  color: var(--red);
+  margin-bottom: 5px;
+}
+
+.donate-message p {
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.55;
 }
 
 .footer-menu {

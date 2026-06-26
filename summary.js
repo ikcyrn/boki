@@ -1,15 +1,20 @@
 const storageKey = "receipt-book-expenses-v1";
 
 const elements = {
-  monthSelect: document.querySelector("#month-select"),
+  periodSelect: document.querySelector("#period-select"),
+  customRange: document.querySelector("#custom-range"),
   startDate: document.querySelector("#start-date"),
   endDate: document.querySelector("#end-date"),
   applyRange: document.querySelector("#apply-range"),
   periodLabel: document.querySelector("#period-label"),
   summaryTotal: document.querySelector("#summary-total"),
   summaryCount: document.querySelector("#summary-count"),
+  dailyAverage: document.querySelector("#daily-average"),
+  maxDay: document.querySelector("#max-day"),
   categoryList: document.querySelector("#category-list"),
   calendarGrid: document.querySelector("#calendar-grid"),
+  itemsLabel: document.querySelector("#items-label"),
+  clearDayFilter: document.querySelector("#clear-day-filter"),
   summaryItemList: document.querySelector("#summary-item-list"),
 };
 
@@ -17,13 +22,15 @@ const expenses = readExpenses();
 const today = new Date();
 let activeStart = "";
 let activeEnd = "";
-let pendingCalendarStart = "";
+let visibleMonth = toMonthInput(today);
+let selectedDay = "";
 
-elements.monthSelect.value = toMonthInput(today);
-setMonthRange(elements.monthSelect.value);
+setPresetRange("this-month");
 
-elements.monthSelect.addEventListener("change", () => {
-  setMonthRange(elements.monthSelect.value);
+elements.periodSelect.addEventListener("change", () => {
+  selectedDay = "";
+  elements.customRange.hidden = elements.periodSelect.value !== "custom";
+  setPresetRange(elements.periodSelect.value);
 });
 
 elements.applyRange.addEventListener("click", () => {
@@ -34,33 +41,62 @@ elements.applyRange.addEventListener("click", () => {
   }
   activeStart = start <= end ? start : end;
   activeEnd = start <= end ? end : start;
-  pendingCalendarStart = "";
+  visibleMonth = activeEnd.slice(0, 7);
+  selectedDay = "";
   renderSummary();
 });
 
-function setMonthRange(monthValue) {
-  const [year, month] = monthValue.split("-").map(Number);
-  activeStart = `${monthValue}-01`;
-  activeEnd = toInputDate(new Date(year, month, 0));
+elements.clearDayFilter.addEventListener("click", () => {
+  selectedDay = "";
+  renderSummary();
+});
+
+function setPresetRange(value) {
+  const current = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+
+  if (value === "this-month") {
+    activeStart = toInputDate(new Date(current.getFullYear(), current.getMonth(), 1));
+    activeEnd = toInputDate(new Date(current.getFullYear(), current.getMonth() + 1, 0));
+  } else if (value === "last-month") {
+    activeStart = toInputDate(new Date(current.getFullYear(), current.getMonth() - 1, 1));
+    activeEnd = toInputDate(new Date(current.getFullYear(), current.getMonth(), 0));
+  } else if (value === "last-7") {
+    activeStart = toInputDate(addDays(current, -6));
+    activeEnd = toInputDate(current);
+  } else if (value === "last-30") {
+    activeStart = toInputDate(addDays(current, -29));
+    activeEnd = toInputDate(current);
+  } else if (value === "custom") {
+    activeStart = elements.startDate.value || toInputDate(new Date(current.getFullYear(), current.getMonth(), 1));
+    activeEnd = elements.endDate.value || toInputDate(current);
+  }
+
   elements.startDate.value = activeStart;
   elements.endDate.value = activeEnd;
-  pendingCalendarStart = "";
+  visibleMonth = activeStart.slice(0, 7);
   renderSummary();
 }
 
 function renderSummary() {
-  const filtered = expenses
-    .filter((expense) => expense.date >= activeStart && expense.date <= activeEnd)
-    .sort((a, b) => b.date.localeCompare(a.date) || b.createdAt.localeCompare(a.createdAt));
-  const total = filtered.reduce((sum, expense) => sum + Number(expense.amount || 0), 0);
+  const periodItems = filterByRange(activeStart, activeEnd);
+  const visibleItems = selectedDay ? filterByRange(selectedDay, selectedDay) : periodItems;
+  const total = periodItems.reduce((sum, expense) => sum + Number(expense.amount || 0), 0);
 
   elements.periodLabel.textContent = `${formatDisplayDate(activeStart)} - ${formatDisplayDate(activeEnd)}`;
   elements.summaryTotal.textContent = formatYen(total);
-  elements.summaryCount.textContent = `${filtered.length}件`;
+  elements.summaryCount.textContent = `${periodItems.length}件`;
+  elements.dailyAverage.textContent = formatYen(Math.round(total / Math.max(1, getInclusiveDayCount(activeStart, activeEnd))));
+  elements.maxDay.textContent = formatMaxDay(periodItems);
 
-  renderCategories(filtered, total);
+  renderCategories(periodItems, total);
   renderCalendar();
-  renderItems(filtered);
+  renderItems(visibleItems);
+}
+
+function filterByRange(start, end) {
+  return expenses
+    .filter((expense) => expense.date >= start && expense.date <= end)
+    .sort((a, b) => b.date.localeCompare(a.date) || (b.createdAt || "").localeCompare(a.createdAt || ""));
 }
 
 function renderCategories(items, total) {
@@ -102,14 +138,13 @@ function renderCategories(items, total) {
 
 function renderCalendar() {
   elements.calendarGrid.innerHTML = "";
-  const monthValue = elements.monthSelect.value || activeStart.slice(0, 7);
-  const [year, month] = monthValue.split("-").map(Number);
+  const [year, month] = visibleMonth.split("-").map(Number);
   const firstDate = new Date(year, month - 1, 1);
   const lastDate = new Date(year, month, 0);
   const spendingByDate = new Map();
 
   expenses.forEach((expense) => {
-    if (expense.date.slice(0, 7) !== monthValue) {
+    if (expense.date.slice(0, 7) !== visibleMonth) {
       return;
     }
     spendingByDate.set(expense.date, (spendingByDate.get(expense.date) || 0) + Number(expense.amount || 0));
@@ -129,12 +164,15 @@ function renderCalendar() {
   }
 
   for (let day = 1; day <= lastDate.getDate(); day += 1) {
-    const date = `${monthValue}-${String(day).padStart(2, "0")}`;
+    const date = `${visibleMonth}-${String(day).padStart(2, "0")}`;
     const amount = spendingByDate.get(date) || 0;
     const button = document.createElement("button");
     button.className = "calendar-day";
     if (date >= activeStart && date <= activeEnd) {
       button.classList.add("is-selected");
+    }
+    if (date === selectedDay) {
+      button.classList.add("is-focused");
     }
     if (amount > 0) {
       button.classList.add("has-spending");
@@ -143,54 +181,96 @@ function renderCalendar() {
     button.innerHTML = `<span></span><small></small>`;
     button.querySelector("span").textContent = String(day);
     button.querySelector("small").textContent = amount > 0 ? compactYen(amount) : "";
-    button.addEventListener("click", () => selectCalendarDate(date));
+    button.addEventListener("click", () => inspectDay(date));
     elements.calendarGrid.append(button);
   }
 }
 
 function renderItems(items) {
   elements.summaryItemList.innerHTML = "";
+  elements.clearDayFilter.hidden = !selectedDay;
+  elements.itemsLabel.textContent = selectedDay
+    ? `${formatDisplayDate(selectedDay)} の明細です。`
+    : "選択期間内の登録済み支出です。";
+
   if (items.length === 0) {
     elements.summaryItemList.append(createEmptyState("明細はありません"));
     return;
   }
 
-  items.forEach((expense) => {
-    const row = document.createElement("div");
-    row.className = "summary-item";
-    row.innerHTML = `
-      <div class="summary-item-main">
+  groupByDate(items).forEach(([date, dateItems]) => {
+    const group = document.createElement("article");
+    group.className = "summary-date-group";
+    const subtotal = dateItems.reduce((sum, expense) => sum + Number(expense.amount || 0), 0);
+    group.innerHTML = `
+      <div class="summary-date-heading">
         <strong></strong>
         <span></span>
       </div>
-      <div class="summary-item-right">
-        <span></span>
-      </div>
+      <div class="summary-date-items"></div>
     `;
-    row.querySelector("strong").textContent = expense.store || "未入力";
-    row.querySelector(".summary-item-main span").textContent = `${formatDisplayDate(expense.date)} / ${expense.category || "その他"}`;
-    row.querySelector(".summary-item-right span").textContent = formatYen(Number(expense.amount || 0));
-    elements.summaryItemList.append(row);
+    group.querySelector("strong").textContent = formatDisplayDate(date);
+    group.querySelector("span").textContent = formatYen(subtotal);
+
+    const list = group.querySelector(".summary-date-items");
+    dateItems.forEach((expense) => {
+      const row = document.createElement("div");
+      row.className = "summary-item";
+      row.innerHTML = `
+        <div class="summary-item-main">
+          <strong></strong>
+          <span></span>
+        </div>
+        <div class="summary-item-right">
+          <span></span>
+        </div>
+      `;
+      row.querySelector("strong").textContent = expense.store || "未入力";
+      row.querySelector(".summary-item-main span").textContent = expense.category || "その他";
+      row.querySelector(".summary-item-right span").textContent = formatYen(Number(expense.amount || 0));
+      list.append(row);
+    });
+
+    elements.summaryItemList.append(group);
   });
 }
 
-function selectCalendarDate(date) {
-  if (!pendingCalendarStart) {
-    activeStart = date;
-    activeEnd = date;
-    pendingCalendarStart = date;
-  } else if (date < pendingCalendarStart) {
-    activeStart = date;
-    activeEnd = pendingCalendarStart;
-    pendingCalendarStart = "";
-  } else {
-    activeStart = pendingCalendarStart;
-    activeEnd = date;
-    pendingCalendarStart = "";
+function inspectDay(date) {
+  if (date < activeStart || date > activeEnd) {
+    return;
   }
-  elements.startDate.value = activeStart;
-  elements.endDate.value = activeEnd;
+  selectedDay = selectedDay === date ? "" : date;
   renderSummary();
+}
+
+function groupByDate(items) {
+  const grouped = new Map();
+  items.forEach((expense) => {
+    if (!grouped.has(expense.date)) {
+      grouped.set(expense.date, []);
+    }
+    grouped.get(expense.date).push(expense);
+  });
+  return [...grouped.entries()].sort(([a], [b]) => b.localeCompare(a));
+}
+
+function formatMaxDay(items) {
+  if (items.length === 0) {
+    return "-";
+  }
+
+  const grouped = new Map();
+  items.forEach((expense) => {
+    grouped.set(expense.date, (grouped.get(expense.date) || 0) + Number(expense.amount || 0));
+  });
+  const [date, amount] = [...grouped.entries()].sort(([, a], [, b]) => b - a)[0];
+  return `${formatDisplayDate(date)} ${compactYen(amount)}`;
+}
+
+function getInclusiveDayCount(start, end) {
+  const startDate = parseInputDate(start);
+  const endDate = parseInputDate(end);
+  return Math.round((endDate - startDate) / 86400000) + 1;
 }
 
 function createEmptyState(text) {
@@ -207,6 +287,15 @@ function readExpenses() {
   } catch {
     return [];
   }
+}
+
+function addDays(date, days) {
+  return new Date(date.getFullYear(), date.getMonth(), date.getDate() + days);
+}
+
+function parseInputDate(date) {
+  const [year, month, day] = date.split("-").map(Number);
+  return new Date(year, month - 1, day);
 }
 
 function toMonthInput(date) {

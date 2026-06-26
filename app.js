@@ -19,7 +19,6 @@ const elements = {
 
 let expenses = readExpenses();
 let currentImageName = "";
-let lastScanSignature = "";
 
 elements.date.value = toInputDate(new Date());
 renderExpenses();
@@ -42,15 +41,12 @@ elements.readButton.addEventListener("click", async () => {
   const scanResult = await scanReceiptImage();
   const fallbackText = scanResult.text || buildFallbackTextFromFileName(currentImageName);
   elements.ocrText.value = fallbackText;
-  const parsed = applyParsedText(fallbackText, scanResult.parsed);
-  const recorded = autoRecordParsedExpense(parsed, fallbackText);
+  applyParsedText(fallbackText, scanResult.parsed);
 
-  elements.scanStatus.textContent = recorded
-    ? "読み取り完了。支出を自動登録しました。"
-    : scanResult.text
+  elements.scanStatus.textContent = scanResult.text
       ? "読み取り完了。内容を確認して登録してください。"
-      : "端末のOCRが使えないため、画像名から候補を入力しました。本文欄に文字を貼ると再抽出できます。";
-  elements.readButton.disabled = false;
+      : "端末のOCRが使えないため、画像名から候補を入力しました。内容を確認してください。";
+  elements.readButton.disabled = true;
 });
 
 elements.ocrText.addEventListener("input", () => {
@@ -294,33 +290,6 @@ function normalizeParsedReceipt(parsed) {
     category: parsed.category || "",
     needsReview: Boolean(parsed.needsReview),
   };
-}
-
-function autoRecordParsedExpense(parsed, sourceText) {
-  const date = parsed.date;
-  const store = parsed.store;
-  const amount = Number(parsed.amount);
-  if (!date || !store || !Number.isFinite(amount) || amount <= 0) {
-    return false;
-  }
-
-  const signature = `${date}|${store}|${amount}|${sourceText.slice(0, 120)}`;
-  if (signature === lastScanSignature) {
-    return false;
-  }
-
-  lastScanSignature = signature;
-  expenses = [{
-    id: crypto.randomUUID ? crypto.randomUUID() : String(Date.now()),
-    date,
-    store,
-    amount,
-    category: guessCategory(`${store}\n${sourceText}`),
-    createdAt: new Date().toISOString(),
-  }, ...expenses];
-  writeExpenses(expenses);
-  renderExpenses();
-  return true;
 }
 
 function parseReceiptText(text) {

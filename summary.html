@@ -16,17 +16,23 @@
           <div class="panel-heading">
             <div>
               <h1 id="summary-page-title">支出サマリー</h1>
-              <p>月ごと、または期間を選んで確認できます。</p>
+              <p>期間を選んで支出を確認できます。</p>
             </div>
           </div>
 
           <div class="summary-section-body summary-controls">
             <label>
-              <span>月を選択</span>
-              <input id="month-select" type="month">
+              <span>表示期間</span>
+              <select id="period-select">
+                <option value="this-month">今月</option>
+                <option value="last-month">先月</option>
+                <option value="last-7">過去7日</option>
+                <option value="last-30">過去30日</option>
+                <option value="custom">カスタム期間</option>
+              </select>
             </label>
 
-            <div class="range-grid">
+            <div class="range-grid" id="custom-range" hidden>
               <label>
                 <span>開始日</span>
                 <input id="start-date" type="date">
@@ -35,9 +41,8 @@
                 <span>終了日</span>
                 <input id="end-date" type="date">
               </label>
+              <button class="primary-button" id="apply-range" type="button">期間で表示</button>
             </div>
-
-            <button class="primary-button" id="apply-range" type="button">期間で表示</button>
           </div>
         </section>
 
@@ -56,6 +61,17 @@
               <small id="summary-count">0件</small>
             </div>
 
+            <div class="summary-stat-grid">
+              <div class="summary-stat">
+                <span>1日平均</span>
+                <strong id="daily-average">¥0</strong>
+              </div>
+              <div class="summary-stat">
+                <span>最大支出日</span>
+                <strong id="max-day">-</strong>
+              </div>
+            </div>
+
             <div class="category-list" id="category-list"></div>
           </div>
         </section>
@@ -64,7 +80,7 @@
           <div class="panel-heading">
             <div>
               <h2 id="calendar-title">カレンダー</h2>
-              <p>支出がある日をタップして期間入力に反映できます。</p>
+              <p>支出がある日をタップすると、その日の明細を確認できます。</p>
             </div>
           </div>
           <div class="summary-section-body">
@@ -76,10 +92,11 @@
           <div class="panel-heading">
             <div>
               <h2 id="summary-items-title">明細</h2>
-              <p>選択期間内の登録済み支出です。</p>
+              <p id="items-label">選択期間内の登録済み支出です。</p>
             </div>
           </div>
           <div class="summary-section-body">
+            <button class="small-button day-filter-clear" id="clear-day-filter" type="button" hidden>期間全体に戻る</button>
             <div class="summary-item-list" id="summary-item-list"></div>
           </div>
         </section>
@@ -87,8 +104,8 @@
 
       <nav class="footer-menu" aria-label="ページ内メニュー">
         <a href="index.html">読取</a>
-        <a href="index.html#form-title">登録</a>
         <a href="summary.html" aria-current="page">集計</a>
+        <a href="donate.html">寄付</a>
       </nav>
     </div>
 
