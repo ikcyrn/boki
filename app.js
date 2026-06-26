@@ -36,19 +36,19 @@ elements.fileInput.addEventListener("change", () => {
 });
 
 elements.readButton.addEventListener("click", async () => {
-  elements.scanStatus.textContent = "読み取り中...";
+  elements.scanStatus.textContent = "読み取り中... 初回は少し時間がかかります。";
   elements.readButton.disabled = true;
 
-  const detectedText = await detectTextFromImage();
-  const fallbackText = detectedText || buildFallbackTextFromFileName(currentImageName);
+  const scanResult = await scanReceiptImage();
+  const fallbackText = scanResult.text || buildFallbackTextFromFileName(currentImageName);
   elements.ocrText.value = fallbackText;
-  const parsed = applyParsedText(fallbackText);
+  const parsed = applyParsedText(fallbackText, scanResult.parsed);
   const recorded = autoRecordParsedExpense(parsed, fallbackText);
 
   elements.scanStatus.textContent = recorded
     ? "読み取り完了。支出を自動登録しました。"
-    : detectedText
-      ? "読み取り完了。金額が不明なため、内容を確認して登録してください。"
+    : scanResult.text
+      ? "読み取り完了。内容を確認して登録してください。"
       : "端末のOCRが使えないため、画像名から候補を入力しました。本文欄に文字を貼ると再抽出できます。";
   elements.readButton.disabled = false;
 });
@@ -89,9 +89,163 @@ elements.form.addEventListener("submit", (event) => {
   elements.scanStatus.textContent = "登録しました。日付別一覧に反映済みです。";
 });
 
-async function detectTextFromImage() {
+async function scanReceiptImage() {
   const file = elements.fileInput.files?.[0];
-  if (!file || !("TextDetector" in window)) {
+  if (!file) {
+    return { text: "", parsed: null, source: "none" };
+  }
+
+  const backendResult = await scanWithBackend(file);
+  if (backendResult.text) {
+    return backendResult;
+  }
+  if (backendResult.status === 501 || backendResult.status === 405) {
+    elements.scanStatus.textContent = "Nodeバックエンドではなく静的サーバーが動いています。npm startで起動してください。";
+  }
+
+  const tesseractText = await detectWithTesseract(file);
+  if (tesseractText) {
+    return { text: tesseractText, parsed: null, source: "tesseract" };
+  }
+
+  const textDetectorText = await detectWithTextDetector(file);
+  return { text: textDetectorText, parsed: null, source: "text-detector" };
+}
+
+async function scanWithBackend(file) {
+  try {
+    const formData = new FormData();
+    formData.append("receipt", file);
+    const response = await fetch("/api/receipt/scan", {
+      method: "POST",
+      body: formData,
+    });
+    if (!response.ok) {
+      return { text: "", parsed: null, source: "backend", status: response.status };
+    }
+    const result = await response.json();
+    return {
+      text: result.text || "",
+      parsed: result.parsed || null,
+      source: "backend",
+      status: response.status,
+    };
+  } catch {
+    return { text: "", parsed: null, source: "backend", status: 0 };
+  }
+}
+
+async function detectWithTesseract(file) {
+  if (!window.Tesseract) {
+    return "";
+  }
+
+  let worker;
+  try {
+    const imageSources = await buildOcrImageSources(file);
+    worker = await window.Tesseract.createWorker("jpn+eng", 1, {
+      workerPath: "./tesseract-worker-filter.js",
+      logger: (message) => {
+        if (message.status === "recognizing text" && message.progress) {
+          elements.scanStatus.textContent = `読み取り中... ${Math.round(message.progress * 100)}%`;
+        }
+      },
+      errorHandler: (message) => {
+        if (!isKnownTesseractParameterWarning(message)) {
+          console.warn(message);
+        }
+      },
+    });
+    await worker.setParameters({
+      preserve_interword_spaces: "1",
+      tessedit_pageseg_mode: "6",
+    });
+
+    let bestText = "";
+    let bestScore = -1;
+    for (const source of imageSources) {
+      const result = await worker.recognize(source.image);
+      const text = result.data.text.trim();
+      const parsed = parseReceiptText(text);
+      const score = scoreParsedReceipt(parsed, text) + source.bonus;
+      if (score > bestScore) {
+        bestText = text;
+        bestScore = score;
+      }
+      if (parsed.date && parsed.store && parsed.amount) {
+        break;
+      }
+    }
+    return bestText;
+  } catch {
+    return "";
+  } finally {
+    if (worker) {
+      try {
+        await worker.terminate();
+      } catch {
+        // The recognition result is more important than cleanup telemetry.
+      }
+    }
+  }
+}
+
+function isKnownTesseractParameterWarning(message) {
+  return typeof message === "string" && /Parameter not found: (language_model_|segsearch_|classify_|assume_|chop_|allow_blob_)/.test(message);
+}
+
+async function buildOcrImageSources(file) {
+  let processed = null;
+  try {
+    processed = await preprocessReceiptImage(file);
+  } catch {
+    processed = null;
+  }
+  if (!processed) {
+    return [{ image: file, bonus: 0 }];
+  }
+  return [
+    { image: processed, bonus: 2 },
+    { image: file, bonus: 0 },
+  ];
+}
+
+async function preprocessReceiptImage(file) {
+  const bitmap = await createImageBitmap(file);
+  const maxWidth = 1800;
+  const scale = Math.min(3, Math.max(1.5, maxWidth / bitmap.width));
+  const canvas = document.createElement("canvas");
+  canvas.width = Math.round(bitmap.width * scale);
+  canvas.height = Math.round(bitmap.height * scale);
+  const context = canvas.getContext("2d", { willReadFrequently: true });
+  context.fillStyle = "#ffffff";
+  context.fillRect(0, 0, canvas.width, canvas.height);
+  context.imageSmoothingEnabled = true;
+  context.imageSmoothingQuality = "high";
+  context.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+
+  const imageData = context.getImageData(0, 0, canvas.width, canvas.height);
+  const data = imageData.data;
+  let total = 0;
+  for (let index = 0; index < data.length; index += 4) {
+    const gray = data[index] * 0.299 + data[index + 1] * 0.587 + data[index + 2] * 0.114;
+    total += gray;
+  }
+  const average = total / (data.length / 4);
+  const threshold = Math.max(138, Math.min(188, average * 0.88));
+  for (let index = 0; index < data.length; index += 4) {
+    const gray = data[index] * 0.299 + data[index + 1] * 0.587 + data[index + 2] * 0.114;
+    const contrasted = gray < threshold ? 0 : 255;
+    data[index] = contrasted;
+    data[index + 1] = contrasted;
+    data[index + 2] = contrasted;
+  }
+  context.putImageData(imageData, 0, 0);
+  return canvas;
+}
+
+async function detectWithTextDetector(file) {
+  if (!("TextDetector" in window)) {
     return "";
   }
 
@@ -105,8 +259,16 @@ async function detectTextFromImage() {
   }
 }
 
-function applyParsedText(text) {
-  const parsed = parseReceiptText(text);
+function applyParsedText(text, preferredParsed = null) {
+  const localParsed = parseReceiptText(text);
+  const backendParsed = normalizeParsedReceipt(preferredParsed);
+  const parsed = backendParsed ? {
+    date: backendParsed.date || localParsed.date,
+    store: backendParsed.store || localParsed.store,
+    amount: backendParsed.amount || localParsed.amount,
+    category: backendParsed.category || localParsed.category,
+    needsReview: backendParsed.needsReview || localParsed.needsReview,
+  } : localParsed;
   if (parsed.date) {
     elements.date.value = parsed.date;
   }
@@ -116,15 +278,29 @@ function applyParsedText(text) {
   if (parsed.amount) {
     elements.amount.value = parsed.amount;
   }
-  elements.category.value = guessCategory(parsed.store || text);
+  elements.category.value = parsed.category || guessCategory(parsed.store || text);
   return parsed;
 }
 
-function autoRecordParsedExpense(parsed, sourceText) {
-  const date = parsed.date || elements.date.value;
-  const store = parsed.store || "レシート";
+function normalizeParsedReceipt(parsed) {
+  if (!parsed || typeof parsed !== "object") {
+    return null;
+  }
   const amount = Number(parsed.amount);
-  if (!date || !Number.isFinite(amount) || amount <= 0) {
+  return {
+    date: parsed.date || "",
+    store: parsed.store || "",
+    amount: Number.isFinite(amount) && amount > 0 ? amount : "",
+    category: parsed.category || "",
+    needsReview: Boolean(parsed.needsReview),
+  };
+}
+
+function autoRecordParsedExpense(parsed, sourceText) {
+  const date = parsed.date;
+  const store = parsed.store;
+  const amount = Number(parsed.amount);
+  if (!date || !store || !Number.isFinite(amount) || amount <= 0) {
     return false;
   }
 
@@ -148,10 +324,7 @@ function autoRecordParsedExpense(parsed, sourceText) {
 }
 
 function parseReceiptText(text) {
-  const normalized = text
-    .replace(/[，]/g, ",")
-    .replace(/[￥]/g, "¥")
-    .replace(/[０-９]/g, (char) => String.fromCharCode(char.charCodeAt(0) - 0xfee0));
+  const normalized = normalizeReceiptText(text);
   const lines = normalized.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
 
   return {
@@ -161,50 +334,161 @@ function parseReceiptText(text) {
   };
 }
 
+function scoreParsedReceipt(parsed, text) {
+  let score = 0;
+  if (parsed.date) {
+    score += 4;
+  }
+  if (parsed.store) {
+    score += 3;
+  }
+  if (parsed.amount) {
+    score += 5;
+  }
+  if (/合計|税込|お買上|現計|お支払/.test(text)) {
+    score += 2;
+  }
+  if (/お預|預り|釣|ポイント|消費税/.test(text)) {
+    score += 1;
+  }
+  return score;
+}
+
+function normalizeReceiptText(text) {
+  return text
+    .replace(/[！-～]/g, (char) => String.fromCharCode(char.charCodeAt(0) - 0xfee0))
+    .replace(/　/g, " ")
+    .replace(/[¥￥]/g, "¥")
+    .replace(/[，、]/g, ",")
+    .replace(/[−ー―]/g, "-")
+    .replace(/[|]/g, "1")
+    .replace(/([0-9])\s+([0-9])/g, "$1$2")
+    .replace(/\s+(円|¥)/g, "$1")
+    .replace(/(合)\s+(計)/g, "$1$2")
+    .replace(/(小)\s+(計)/g, "$1$2")
+    .replace(/(現)\s+(計)/g, "$1$2");
+}
+
 function parseDate(text) {
   const japaneseDate = text.match(/(20\d{2})\s*年\s*(\d{1,2})\s*月\s*(\d{1,2})\s*日/);
   if (japaneseDate) {
     return formatDateParts(japaneseDate[1], japaneseDate[2], japaneseDate[3]);
   }
 
-  const slashDate = text.match(/(20\d{2})[./-](\d{1,2})[./-](\d{1,2})/);
-  if (slashDate) {
-    return formatDateParts(slashDate[1], slashDate[2], slashDate[3]);
+  const eraDate = text.match(/(?:令和|R)\s*(\d{1,2})\s*[年./-]\s*(\d{1,2})\s*[月./-]\s*(\d{1,2})/i);
+  if (eraDate) {
+    return formatDateParts(String(2018 + Number(eraDate[1])), eraDate[2], eraDate[3]);
   }
 
-  const shortDate = text.match(/(\d{2})[./-](\d{1,2})[./-](\d{1,2})/);
+  const fullYearDate = text.match(/(20\d{2})[./-]\s*(\d{1,2})[./-]\s*(\d{1,2})/);
+  if (fullYearDate) {
+    return formatDateParts(fullYearDate[1], fullYearDate[2], fullYearDate[3]);
+  }
+
+  const shortDate = text.match(/\b(\d{2})[./-]\s*(\d{1,2})[./-]\s*(\d{1,2})\b/);
   if (shortDate) {
-    return formatDateParts(`20${shortDate[1]}`, shortDate[2], shortDate[3]);
+    const year = Number(shortDate[1]) >= 80 ? `19${shortDate[1]}` : `20${shortDate[1]}`;
+    return formatDateParts(year, shortDate[2], shortDate[3]);
   }
 
   return "";
 }
 
 function parseStore(lines) {
-  const ignored = /領収|レシート|登録番号|電話|tel|合計|小計|税|対象|現計|釣銭|お預り/i;
-  const line = lines.find((item) => item.length >= 2 && !ignored.test(item) && !/\d{4}[年./-]/.test(item));
+  const chainLine = lines.find((item) => /セブン|ローソン|ファミリー|ファミマ|ミニストップ|イオン|西友|ライフ|マルエツ|まいばす|サミット|オーケー|成城石井|ドン.?キ|マツモトキヨシ|スギ薬局|ウエルシア|ツルハ|ココカラ|無印|ニトリ|ダイソー|キャンドゥ|スターバックス|ドトール|マクドナルド|吉野家|松屋|すき家/.test(item));
+  if (chainLine) {
+    return cleanStoreName(chainLine);
+  }
+
+  const ignored = /領収|レシート|登録番号|事業者|電話|tel|〒|住所|合計|小計|税|対象|現計|釣銭|釣り|お預|預り|クレジット|電子マネー|ポイント|明細|単価|数量|担当|責任者|毎度|ありがとう|http|www/i;
+  const line = lines.find((item) => {
+    const compact = item.replace(/\s/g, "");
+    return compact.length >= 2
+      && /[ぁ-んァ-ヶ一-龠A-Za-z]/.test(compact)
+      && !ignored.test(compact)
+      && !/\d{2,4}[年./-]\d{1,2}/.test(compact)
+      && !/^[0-9,¥()\-\s]+$/.test(compact);
+  });
   return line ? line.slice(0, 40) : "";
 }
 
-function parseAmount(text) {
-  const candidates = [];
-  const totalLinePattern = /(合計|総合計|お買上計|税込|現計)[^\d¥]*(?:¥)?\s*([0-9][0-9,]*)/g;
-  let match = totalLinePattern.exec(text);
-  while (match) {
-    candidates.push(Number(match[2].replace(/,/g, "")));
-    match = totalLinePattern.exec(text);
-  }
+function cleanStoreName(line) {
+  return line
+    .replace(/領収書|レシート/g, "")
+    .replace(/\s{2,}/g, " ")
+    .trim()
+    .slice(0, 40);
+}
 
-  if (candidates.length === 0) {
-    const amountPattern = /(?:¥|円\s*)\s*([0-9][0-9,]*)|([0-9][0-9,]*)\s*円/g;
-    match = amountPattern.exec(text);
-    while (match) {
-      candidates.push(Number((match[1] || match[2]).replace(/,/g, "")));
-      match = amountPattern.exec(text);
+function parseAmount(text) {
+  const lines = text.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+  const priorityLabels = [
+    /(?:税込|税こみ|内税)?\s*(?:総)?合計/,
+    /お買上(?:げ)?計/,
+    /お支払(?:い)?金額/,
+    /請求金額/,
+    /現計/,
+    /合\s*計/,
+  ];
+  const excluded = /小計|税額|消費税|対象|預|釣|おつり|返金|ポイント|残高|割引|値引|クーポン|クレジット|電子マネー|交通系|WAON|nanaco|PayPay|楽天|d払い|au PAY/i;
+
+  for (const label of priorityLabels) {
+    for (let index = 0; index < lines.length; index += 1) {
+      if (!label.test(lines[index])) {
+        continue;
+      }
+      const joined = [lines[index], lines[index + 1], lines[index + 2]].filter(Boolean).join(" ");
+      const amount = amountAfterLabel(joined, label);
+      if (amount) {
+        return amount;
+      }
     }
   }
 
-  return candidates.length ? Math.max(...candidates) : "";
+  const yenAmounts = lines
+    .filter((line) => !excluded.test(line))
+    .flatMap((line) => amountsFromLine(line))
+    .filter((amount) => amount >= 10);
+
+  if (yenAmounts.length) {
+    return Math.max(...yenAmounts);
+  }
+
+  const numericTotal = text.match(/(?:合計|現計|税込)[^\d]{0,8}([0-9]{2,3}(?:,[0-9]{3})+|[0-9]{2,7})/);
+  if (numericTotal) {
+    return Number(numericTotal[1].replace(/,/g, ""));
+  }
+
+  return "";
+}
+
+function amountFromLine(line) {
+  const amounts = amountsFromLine(line);
+  return amounts.length ? amounts[amounts.length - 1] : "";
+}
+
+function amountAfterLabel(line, label) {
+  const labelMatch = line.match(label);
+  const target = labelMatch ? line.slice(labelMatch.index + labelMatch[0].length) : line;
+  const amounts = amountsFromLine(target);
+  if (amounts.length) {
+    return amounts[0];
+  }
+  return amountFromLine(line);
+}
+
+function amountsFromLine(line) {
+  const amounts = [];
+  const amountPattern = /(?:¥\s*)?([0-9]{1,3}(?:,[0-9]{3})+|[0-9]{2,7})\s*(?:円)?/g;
+  let match = amountPattern.exec(line);
+  while (match) {
+    const amount = Number(match[1].replace(/,/g, ""));
+    if (Number.isFinite(amount)) {
+      amounts.push(amount);
+    }
+    match = amountPattern.exec(line);
+  }
+  return amounts;
 }
 
 function guessCategory(source) {

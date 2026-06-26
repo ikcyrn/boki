@@ -65,7 +65,7 @@
             </label>
             <label>
               <span>読み取り文字</span>
-              <textarea id="ocr-text" rows="5" placeholder="OCR結果やレシート本文を貼り付けると、日付・金額・店名を抽出します。"></textarea>
+              <textarea id="ocr-text" rows="5" placeholder="OCR結果やレシート本文を貼り付けると、合計金額・日付・店名を再抽出します。"></textarea>
             </label>
             <div class="form-actions">
               <button class="primary-button" type="submit">登録する</button>
@@ -119,6 +119,7 @@
       </li>
     </template>
 
-    <script src="app.js"></script>
+    <script defer src="https://cdn.jsdelivr.net/npm/tesseract.js@5.1.1/dist/tesseract.min.js"></script>
+    <script defer src="app.js"></script>
   </body>
 </html>
