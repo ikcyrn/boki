@@ -495,6 +495,10 @@ textarea {
   padding: 0;
 }
 
+.calendar-inactive {
+  grid-column: 1 / -1;
+}
+
 .calendar-weekday {
   color: var(--muted);
   font-size: 11px;

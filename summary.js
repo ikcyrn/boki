@@ -22,7 +22,6 @@ const expenses = readExpenses();
 const today = new Date();
 let activeStart = "";
 let activeEnd = "";
-let visibleMonth = toMonthInput(today);
 let selectedDay = "";
 
 setPresetRange("this-month");
@@ -41,7 +40,6 @@ elements.applyRange.addEventListener("click", () => {
   }
   activeStart = start <= end ? start : end;
   activeEnd = start <= end ? end : start;
-  visibleMonth = activeEnd.slice(0, 7);
   selectedDay = "";
   renderSummary();
 });
@@ -73,7 +71,6 @@ function setPresetRange(value) {
 
   elements.startDate.value = activeStart;
   elements.endDate.value = activeEnd;
-  visibleMonth = activeStart.slice(0, 7);
   renderSummary();
 }
 
@@ -138,13 +135,19 @@ function renderCategories(items, total) {
 
 function renderCalendar() {
   elements.calendarGrid.innerHTML = "";
-  const [year, month] = visibleMonth.split("-").map(Number);
-  const firstDate = new Date(year, month - 1, 1);
-  const lastDate = new Date(year, month, 0);
+  if (!isCalendarActiveRange()) {
+    const inactive = createEmptyState("カレンダーは31日以内の期間で表示できます");
+    inactive.classList.add("calendar-inactive");
+    elements.calendarGrid.append(inactive);
+    return;
+  }
+
+  const startDate = parseInputDate(activeStart);
+  const endDate = parseInputDate(activeEnd);
   const spendingByDate = new Map();
 
   expenses.forEach((expense) => {
-    if (expense.date.slice(0, 7) !== visibleMonth) {
+    if (expense.date < activeStart || expense.date > activeEnd) {
       return;
     }
     spendingByDate.set(expense.date, (spendingByDate.get(expense.date) || 0) + Number(expense.amount || 0));
@@ -157,20 +160,18 @@ function renderCalendar() {
     elements.calendarGrid.append(cell);
   });
 
-  for (let index = 0; index < firstDate.getDay(); index += 1) {
+  for (let index = 0; index < startDate.getDay(); index += 1) {
     const blank = document.createElement("div");
     blank.className = "calendar-day is-blank";
     elements.calendarGrid.append(blank);
   }
 
-  for (let day = 1; day <= lastDate.getDate(); day += 1) {
-    const date = `${visibleMonth}-${String(day).padStart(2, "0")}`;
+  for (let dateObject = startDate; dateObject <= endDate; dateObject = addDays(dateObject, 1)) {
+    const date = toInputDate(dateObject);
     const amount = spendingByDate.get(date) || 0;
     const button = document.createElement("button");
     button.className = "calendar-day";
-    if (date >= activeStart && date <= activeEnd) {
-      button.classList.add("is-selected");
-    }
+    button.classList.add("is-selected");
     if (date === selectedDay) {
       button.classList.add("is-focused");
     }
@@ -179,7 +180,7 @@ function renderCalendar() {
     }
     button.type = "button";
     button.innerHTML = `<span></span><small></small>`;
-    button.querySelector("span").textContent = String(day);
+    button.querySelector("span").textContent = formatCalendarDay(dateObject);
     button.querySelector("small").textContent = amount > 0 ? compactYen(amount) : "";
     button.addEventListener("click", () => inspectDay(date));
     elements.calendarGrid.append(button);
@@ -236,11 +237,18 @@ function renderItems(items) {
 }
 
 function inspectDay(date) {
+  if (!isCalendarActiveRange()) {
+    return;
+  }
   if (date < activeStart || date > activeEnd) {
     return;
   }
   selectedDay = selectedDay === date ? "" : date;
   renderSummary();
+}
+
+function isCalendarActiveRange() {
+  return Boolean(activeStart && activeEnd && getInclusiveDayCount(activeStart, activeEnd) <= 31);
 }
 
 function groupByDate(items) {
@@ -312,6 +320,10 @@ function formatDisplayDate(date) {
   }
   const [year, month, day] = date.split("-");
   return `${year}/${month}/${day}`;
+}
+
+function formatCalendarDay(date) {
+  return String(date.getDate());
 }
 
 function formatYen(value) {

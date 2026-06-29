@@ -485,8 +485,11 @@ function guessCategory(source) {
 
 function renderExpenses() {
   elements.dateList.innerHTML = "";
-  const grouped = groupByDate(expenses);
-  const grandTotal = expenses.reduce((sum, expense) => sum + expense.amount, 0);
+  const recentExpenses = [...expenses]
+    .sort((a, b) => b.date.localeCompare(a.date) || (b.createdAt || "").localeCompare(a.createdAt || ""))
+    .slice(0, 5);
+  const grandTotal = recentExpenses.reduce((sum, expense) => sum + expense.amount, 0);
+  const grouped = groupByDate(recentExpenses);
   elements.grandTotal.textContent = formatYen(grandTotal);
 
   if (grouped.length === 0) {
